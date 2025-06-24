@@ -234,25 +234,132 @@ class GaryBot:
         
         if time_data['type'] == 'weekend':
             msg += f"🗓️ Weekend shift: {time_data['paid_hours']:.1f} hours\n"
-        msg += f"💰 Pay: £{time_data['total_pay']:.2f}\n"
-    else:
-        msg += f"⏰ Hours: {time_data['start_time']} to {time_data['end_time']}\n"
-        msg += f"📊 Total: {time_data['total_hours']:.1f}h, Paid: {time_data['paid_hours']:.1f}h"
-        
-        if time_data['total_hours'] > 6:
-            msg += " (lunch deducted)"
-        msg += "\n"
-        
-        if time_data['overtime_hours'] > 0:
-            regular_pay = self.DAILY_RATE
-            overtime_pay = time_data['overtime_hours'] * self.OVERTIME_RATE
-            msg += f"📋 Regular: £{regular_pay:.2f}\n"
-            msg += f"⏰ Overtime: {time_data['overtime_hours']:.1f}h = £{overtime_pay:.2f}\n"
-            msg += f"💰 Total pay: £{time_data['total_pay']:.2f}\n"
+            msg += f"💰 Pay: £{time_data['total_pay']:.2f}\n"
         else:
-            msg += f"💰 Normal day pay: £{time_data['total_pay']:.2f}\n"
-    
-    msg += f"\nReply 'YES' to log this, or 'NO' to cancel"
-    
-    return msg
+            msg += f"⏰ Hours: {time_data['start_time']} to {time_data['end_time']}\n"
+            msg += f"📊 Total: {time_data['total_hours']:.1f}h, Paid: {time_data['paid_hours']:.1f}h"
             
+            if time_data['total_hours'] > 6:
+                msg += " (lunch deducted)"
+            msg += "\n"
+            
+            if time_data['overtime_hours'] > 0:
+                regular_pay = self.DAILY_RATE
+                overtime_pay = time_data['overtime_hours'] * self.OVERTIME_RATE
+                msg += f"📋 Regular: £{regular_pay:.2f}\n"
+                msg += f"⏰ Overtime: {time_data['overtime_hours']:.1f}h = £{overtime_pay:.2f}\n"
+                msg += f"💰 Total pay: £{time_data['total_pay']:.2f}\n"
+            else:
+                msg += f"💰 Normal day pay: £{time_data['total_pay']:.2f}\n"
+        
+        msg += "\nReply 'YES' to log this, or 'NO' to cancel"
+        
+        return msg
+    
+    def handle_confirmation(self, from_number: str, confirmed: bool) -> str:
+        """Handle Gary's confirmation response"""
+        
+        if from_number not in self.pending_confirmations:
+            return "No pending confirmation found. Send your work hours first!"
+        
+        pending = self.pending_confirmations[from_number]
+        
+        if not confirmed:
+            # Gary cancelled
+            del self.pending_confirmations[from_number]
+            return "❌ Cancelled. Send your work hours again when ready."
+        
+        # Gary confirmed - process the action
+        if pending['type'] == 'time_entry':
+            result = self.log_time_entry(pending['data'])
+            del self.pending_confirmations[from_number]
+            
+            if result:
+                time_data = pending['data']
+                if time_data['overtime_hours'] > 0:
+                    return f"✅ Logged! {time_data['overtime_hours']:.1f} hour overtime today. Thanks Gary! 👍"
+                elif time_data['type'] == 'weekend':
+                    return f"✅ Weekend shift logged. Thanks Gary! 👍"
+                else:
+                    return f"✅ Normal day logged. Thanks Gary! 👍"
+            else:
+                return "❌ Error logging entry. Please try again or contact Tim."
+        
+        return "Unknown confirmation type."
+    
+    def log_time_entry(self, time_data: dict) -> bool:
+        """Log confirmed time entry to Google Sheets"""
+        try:
+            # Find next empty row
+            next_row = len(self.paye_sheet.get_all_values()) + 1
+            
+            # Log only the 3 essential fields - let sheet calculate the rest
+            row_data = [
+                time_data['date'],
+                time_data['start_time'],
+                time_data['end_time']
+            ]
+            
+            # Write to sheet
+            self.paye_sheet.append_row(row_data)
+            
+            print(f"✅ Logged time entry: {time_data['date']} {time_data['start_time']}-{time_data['end_time']}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error logging time entry: {e}")
+            return False
+    
+    def help_message(self) -> str:
+        """General help message"""
+        return ("🤖 Gary's Accounting Bot\n\n"
+               "📱 Commands:\n"
+               "• 'worked 7:30 till 17:00' - log hours\n"
+               "• 'worked normal day' - standard day\n"
+               "• 'worked 8:00 till 13:00 Saturday' - weekend\n"
+               "• 'status' - help\n\n"
+               "⏰ Always use 24-hour time (17:00 not 5pm)\n"
+               "✅ I'll always confirm before saving anything!")
+
+# Initialize the bot
+gary_bot = GaryBot()
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle incoming WhatsApp messages from Twilio"""
+    
+    try:
+        # Get message details
+        incoming_msg = request.values.get('Body', '').strip()
+        from_number = request.values.get('From', '').replace('whatsapp:', '')
+        
+        print(f"📱 Message from {from_number}: {incoming_msg}")
+        
+        # Process message with Gary's bot
+        response_text = gary_bot.process_message(incoming_msg, from_number)
+        
+        # Send response via Twilio
+        resp = MessagingResponse()
+        resp.message(response_text)
+        
+        print(f"🤖 Response: {response_text}")
+        
+        return str(resp)
+        
+    except Exception as e:
+        print(f"❌ Webhook error: {e}")
+        
+        # Send error message
+        resp = MessagingResponse()
+        resp.message("Sorry, there was an error processing your message. Please try again or contact Tim.")
+        
+        return str(resp)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "bot": "Gary's Accounting Bot"}
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
