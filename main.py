@@ -22,6 +22,7 @@ class GaryBot:
         self.DAILY_RATE = 320.11
         self.OVERTIME_RATE = 61.56
         self.GARY_PHONE = "+447827491339"
+        self.ADMIN_PHONE = "+447831971523"  # Admin (Tim) phone number
         
         # Initialize services
         self.setup_google_sheets()
@@ -29,6 +30,30 @@ class GaryBot:
         
         # Store pending confirmations (in production, use database)
         self.pending_confirmations = {}
+        
+        # Test connections on startup
+        self.test_connections()
+    
+    def test_connections(self):
+        """Test all connections on startup"""
+        print("\n🔧 Testing connections...")
+        
+        # Test Google Sheets
+        try:
+            values = self.paye_sheet.get('A1:C1')
+            print(f"✅ Google Sheets: Connected to {self.spreadsheet.title}")
+            print(f"   PAYE Tracker has {len(self.paye_sheet.get_all_values())} rows")
+        except Exception as e:
+            print(f"❌ Google Sheets: {e}")
+        
+        # Test Twilio
+        try:
+            if self.twilio_client and self.twilio_number:
+                print(f"✅ Twilio: Connected with number {self.twilio_number}")
+            else:
+                print("❌ Twilio: Missing credentials")
+        except Exception as e:
+            print(f"❌ Twilio: {e}")
     
     def setup_google_sheets(self):
         """Setup Google Sheets connection"""
@@ -71,14 +96,27 @@ class GaryBot:
         except Exception as e:
             print(f"❌ Twilio setup error: {e}")
     
+    def is_authorized(self, phone_number: str) -> bool:
+        """Check if phone number is authorized"""
+        return phone_number in [self.GARY_PHONE, self.ADMIN_PHONE]
+    
+    def is_admin(self, phone_number: str) -> bool:
+        """Check if phone number is admin"""
+        return phone_number == self.ADMIN_PHONE
+    
     def process_message(self, message: str, from_number: str) -> str:
         """Main message processing logic"""
         
-        # Only respond to Gary's number
-        if from_number != self.GARY_PHONE:
-            return "Sorry, this bot is only for Gary's use."
+        # Check authorization
+        if not self.is_authorized(from_number):
+            return "Sorry, this bot is only for authorized users."
         
         message = message.lower().strip()
+        
+        # Admin commands
+        if self.is_admin(from_number):
+            if message.startswith('admin'):
+                return self.handle_admin_command(message, from_number)
         
         # Handle confirmations
         if message in ['yes', 'y', 'confirm', 'ok']:
@@ -90,11 +128,63 @@ class GaryBot:
         if self.is_time_message(message):
             return self.handle_time_request(message, from_number)
         elif message in ['help', 'status']:
-            return self.help_message()
+            return self.help_message(from_number)
         else:
             return ("⏰ Send your hours: 'worked 7:30 till 17:00'\n"
                    "📱 Or try: 'worked normal day'\n"
                    "❓ Send 'help' for more commands")
+    
+    def handle_admin_command(self, message: str, from_number: str) -> str:
+        """Handle admin-specific commands"""
+        parts = message.split()
+        
+        if len(parts) == 1 or parts[1] == 'help':
+            return ("👨‍💼 Admin Commands:\n\n"
+                   "• 'admin status' - System status\n"
+                   "• 'admin stats' - Usage statistics\n"
+                   "• 'admin test' - Test connections\n"
+                   "• 'admin clear' - Clear pending confirmations\n"
+                   "• 'admin last' - Show last 5 entries")
+        
+        elif parts[1] == 'status':
+            pending_count = len(self.pending_confirmations)
+            return (f"🤖 Bot Status:\n"
+                   f"• Gary's phone: {self.GARY_PHONE}\n"
+                   f"• Admin phone: {self.ADMIN_PHONE}\n"
+                   f"• Pending confirmations: {pending_count}\n"
+                   f"• Sheet connected: {'✅' if hasattr(self, 'paye_sheet') else '❌'}")
+        
+        elif parts[1] == 'stats':
+            try:
+                all_values = self.paye_sheet.get_all_values()
+                total_entries = len(all_values) - 1  # Minus header
+                return f"📊 Stats:\n• Total entries: {total_entries}\n• Last updated: {all_values[-1][0] if total_entries > 0 else 'Never'}"
+            except:
+                return "❌ Error fetching stats"
+        
+        elif parts[1] == 'test':
+            self.test_connections()
+            return "✅ Connection test complete. Check logs for details."
+        
+        elif parts[1] == 'clear':
+            self.pending_confirmations.clear()
+            return "✅ Cleared all pending confirmations"
+        
+        elif parts[1] == 'last':
+            try:
+                all_values = self.paye_sheet.get_all_values()
+                if len(all_values) <= 1:
+                    return "📋 No entries found"
+                
+                msg = "📋 Last 5 entries:\n\n"
+                for row in all_values[-5:]:
+                    if row[0] != 'Date':  # Skip header if present
+                        msg += f"• {row[0]}: {row[1]} - {row[2]}\n"
+                return msg
+            except:
+                return "❌ Error fetching entries"
+        
+        return "❓ Unknown admin command. Try 'admin help'"
     
     def is_time_message(self, message: str) -> bool:
         """Check if message is about time worked"""
@@ -290,6 +380,13 @@ class GaryBot:
     def log_time_entry(self, time_data: dict) -> bool:
         """Log confirmed time entry to Google Sheets"""
         try:
+            # Refresh the sheet connection in case it timed out
+            try:
+                self.paye_sheet.get_all_values()
+            except Exception:
+                # Reconnect if needed
+                self.setup_google_sheets()
+            
             # Find next empty row
             next_row = len(self.paye_sheet.get_all_values()) + 1
             
@@ -308,11 +405,18 @@ class GaryBot:
             
         except Exception as e:
             print(f"❌ Error logging time entry: {e}")
-            return False
+            # Try one reconnection attempt
+            try:
+                self.setup_google_sheets()
+                self.paye_sheet.append_row(row_data)
+                print("✅ Logged after reconnection")
+                return True
+            except:
+                return False
     
-    def help_message(self) -> str:
+    def help_message(self, from_number: str) -> str:
         """General help message"""
-        return ("🤖 Gary's Accounting Bot\n\n"
+        msg = ("🤖 Gary's Accounting Bot\n\n"
                "📱 Commands:\n"
                "• 'worked 7:30 till 17:00' - log hours\n"
                "• 'worked normal day' - standard day\n"
@@ -320,6 +424,12 @@ class GaryBot:
                "• 'status' - help\n\n"
                "⏰ Always use 24-hour time (17:00 not 5pm)\n"
                "✅ I'll always confirm before saving anything!")
+        
+        # Add admin help hint
+        if self.is_admin(from_number):
+            msg += "\n\n👨‍💼 Type 'admin help' for admin commands"
+        
+        return msg
 
 # Initialize the bot
 gary_bot = GaryBot()
