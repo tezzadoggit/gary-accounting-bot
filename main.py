@@ -232,4 +232,27 @@ class GaryBot:
         msg = "📋 Please confirm:\n\n"
         msg += f"📅 Date: {datetime.strptime(time_data['date'], '%Y-%m-%d').strftime('%d %B %Y')}\n"
         
-        if time_data['t
+        if time_data['type'] == 'weekend':
+            msg += f"🗓️ Weekend shift: {time_data['paid_hours']:.1f} hours\n"
+        msg += f"💰 Pay: £{time_data['total_pay']:.2f}\n"
+    else:
+        msg += f"⏰ Hours: {time_data['start_time']} to {time_data['end_time']}\n"
+        msg += f"📊 Total: {time_data['total_hours']:.1f}h, Paid: {time_data['paid_hours']:.1f}h"
+        
+        if time_data['total_hours'] > 6:
+            msg += " (lunch deducted)"
+        msg += "\n"
+        
+        if time_data['overtime_hours'] > 0:
+            regular_pay = self.DAILY_RATE
+            overtime_pay = time_data['overtime_hours'] * self.OVERTIME_RATE
+            msg += f"📋 Regular: £{regular_pay:.2f}\n"
+            msg += f"⏰ Overtime: {time_data['overtime_hours']:.1f}h = £{overtime_pay:.2f}\n"
+            msg += f"💰 Total pay: £{time_data['total_pay']:.2f}\n"
+        else:
+            msg += f"💰 Normal day pay: £{time_data['total_pay']:.2f}\n"
+    
+    msg += f"\nReply 'YES' to log this, or 'NO' to cancel"
+    
+    return msg
+            
