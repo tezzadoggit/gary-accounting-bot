@@ -387,8 +387,15 @@ class GaryBot:
                 # Reconnect if needed
                 self.setup_google_sheets()
             
-            # Find next empty row
-            next_row = len(self.paye_sheet.get_all_values()) + 1
+            # Find the correct row to insert - look for first empty or formula row
+            all_values = self.paye_sheet.get_all_values()
+            next_row = len(all_values) + 1  # Default to end
+            
+            # Find first row where column A (date) is empty or starts with "-"
+            for i, row in enumerate(all_values[1:], start=2):  # Skip header
+                if i > 10 and (not row[0] or row[0].startswith('-')):
+                    next_row = i
+                    break
             
             # Log only the 3 essential fields - let sheet calculate the rest
             row_data = [
@@ -397,10 +404,11 @@ class GaryBot:
                 time_data['end_time']
             ]
             
-            # Write to sheet
-            self.paye_sheet.append_row(row_data)
+            # Write to the specific row
+            range_name = f'A{next_row}:C{next_row}'
+            self.paye_sheet.update(range_name, [row_data])
             
-            print(f"✅ Logged time entry: {time_data['date']} {time_data['start_time']}-{time_data['end_time']}")
+            print(f"✅ Logged time entry at row {next_row}: {time_data['date']} {time_data['start_time']}-{time_data['end_time']}")
             return True
             
         except Exception as e:
