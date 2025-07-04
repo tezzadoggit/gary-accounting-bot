@@ -378,52 +378,41 @@ class GaryBot:
         return "Unknown confirmation type."
     
     def log_time_entry(self, time_data: dict) -> bool:
-    """Log confirmed time entry to Google Sheets"""
-    try:
-        # Refresh the sheet connection in case it timed out
+        """Log confirmed time entry to Google Sheets"""
         try:
-            self.paye_sheet.get_all_values()
-        except Exception:
-            # Reconnect if needed
-            self.setup_google_sheets()
-        
-        # Find the correct row to insert data
-        # Get all values in column A (dates)
-        dates_column = self.paye_sheet.col_values(1)  # Column A
-        
-        # Find the last row with a valid date (not empty, not "Date" header)
-        last_data_row = 1  # Start after header
-        for i, cell_value in enumerate(dates_column[1:], start=2):  # Skip header
-            if cell_value and cell_value.strip() != "" and not cell_value.startswith("-"):
-                last_data_row = i
-        
-        # Next row is where we insert
-        next_row = last_data_row + 1
-        
-        # Log only the 3 essential fields - let sheet calculate the rest
-        row_data = [
-            time_data['date'],
-            time_data['start_time'],
-            time_data['end_time']
-        ]
-        
-        # Insert at the specific row (this will push down any formulas)
-        self.paye_sheet.insert_row(row_data, next_row)
-        
-        print(f"✅ Logged time entry at row {next_row}: {time_data['date']} {time_data['start_time']}-{time_data['end_time']}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error logging time entry: {e}")
-        # Try one reconnection attempt
-        try:
-            self.setup_google_sheets()
-            # Try simpler append if insert fails
+            # Refresh the sheet connection in case it timed out
+            try:
+                self.paye_sheet.get_all_values()
+            except Exception:
+                # Reconnect if needed
+                self.setup_google_sheets()
+            
+            # Find next empty row
+            next_row = len(self.paye_sheet.get_all_values()) + 1
+            
+            # Log only the 3 essential fields - let sheet calculate the rest
+            row_data = [
+                time_data['date'],
+                time_data['start_time'],
+                time_data['end_time']
+            ]
+            
+            # Write to sheet
             self.paye_sheet.append_row(row_data)
-            print("✅ Logged after reconnection (appended)")
+            
+            print(f"✅ Logged time entry: {time_data['date']} {time_data['start_time']}-{time_data['end_time']}")
             return True
-        except:
-            return False
+            
+        except Exception as e:
+            print(f"❌ Error logging time entry: {e}")
+            # Try one reconnection attempt
+            try:
+                self.setup_google_sheets()
+                self.paye_sheet.append_row(row_data)
+                print("✅ Logged after reconnection")
+                return True
+            except:
+                return False
     
     def help_message(self, from_number: str) -> str:
         """General help message"""
